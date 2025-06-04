@@ -270,6 +270,68 @@ install_docker() {
     print_success "Docker installed successfully"
 }
 
+# Function to install and setup Oh My Zsh
+install_oh_my_zsh() {
+    print_status "Installing Oh My Zsh..."
+    
+    # Install zsh if not already installed
+    if ! command -v zsh >/dev/null 2>&1; then
+        print_status "Installing zsh..."
+        apt-get install -y zsh
+    fi
+    
+    # Check if Oh My Zsh is already installed
+    if [[ -d "/root/.oh-my-zsh" ]]; then
+        print_warning "Oh My Zsh already installed, skipping..."
+        return
+    fi
+    
+    # Install Oh My Zsh (unattended installation)
+    print_status "Downloading and installing Oh My Zsh..."
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    
+    # Change default shell to zsh for root
+    print_status "Changing default shell to zsh for root user..."
+    chsh -s $(which zsh) root
+    
+    # Create a basic .zshrc configuration
+    print_status "Configuring Oh My Zsh..."
+    cat > /root/.zshrc << 'EOF'
+# Path to your oh-my-zsh installation.
+export ZSH="$HOME/.oh-my-zsh"
+
+# Set name of the theme to load
+ZSH_THEME="robbyrussell"
+
+# Which plugins would you like to load?
+plugins=(git docker docker-compose)
+
+source $ZSH/oh-my-zsh.sh
+
+# User configuration
+export PATH=$PATH:/usr/local/bin
+
+# Aliases
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Docker aliases
+alias dps='docker ps'
+alias dpa='docker ps -a'
+alias di='docker images'
+alias dc='docker compose'
+alias dcu='docker compose up -d'
+alias dcd='docker compose down'
+alias dcl='docker compose logs -f'
+EOF
+    
+    print_success "Oh My Zsh installed and configured"
+    print_warning "Zsh will be the default shell for new sessions after reboot"
+}
+
 # Function to setup Dozzle using Docker Compose
 setup_dozzle() {
     print_status "Setting up Dozzle using Docker Compose..."
@@ -307,6 +369,36 @@ setup_dozzle() {
     fi
 }
 
+# Function to prompt for reboot
+prompt_reboot() {
+    echo
+    echo "=========================================="
+    print_warning "REBOOT REQUIRED"
+    echo "=========================================="
+    echo
+    print_status "The following changes require a reboot to take full effect:"
+    echo "  - Hostname change (if modified)"
+    echo "  - Zsh as default shell"
+    echo "  - System updates and kernel changes"
+    echo
+    
+    read -p "Would you like to reboot now? (y/N): " -n 1 -r
+    echo
+    
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        print_status "Rebooting system in 5 seconds..."
+        print_warning "Make sure you can reconnect with SSH keys!"
+        sleep 5
+        reboot
+    else
+        echo
+        print_warning "IMPORTANT: Please reboot the system as soon as possible!"
+        print_warning "Some changes will not take effect until after reboot."
+        echo
+        print_status "To reboot later, run: reboot"
+    fi
+}
+
 # Function to display final information
 display_final_info() {
     echo
@@ -319,6 +411,7 @@ display_final_info() {
     echo "  Swap: $SWAP_SIZE"
     echo "  Docker: Installed and running"
     echo "  Dozzle: Running on port 7001"
+    echo "  Shell: Oh My Zsh (default for new sessions)"
     echo
     echo "Security:"
     echo "  SSH Password: Disabled"
@@ -348,6 +441,7 @@ main() {
     setup_ssh
     setup_swap
     install_docker
+    install_oh_my_zsh
     
     # Setup Dozzle with error handling
     if ! setup_dozzle; then
@@ -357,6 +451,7 @@ main() {
     
     create_setup_marker
     display_final_info
+    prompt_reboot
     
     print_success "Setup script completed successfully!"
 }
