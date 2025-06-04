@@ -70,6 +70,59 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Function to check if running on Debian
+check_debian() {
+    if [[ ! -f /etc/debian_version ]]; then
+        print_error "This script is designed for Debian systems only"
+        print_error "Current system is not Debian"
+        exit 1
+    fi
+    
+    local debian_version=$(cat /etc/debian_version)
+    print_status "Detected Debian version: $debian_version"
+}
+
+# Function to check required dependencies
+check_dependencies() {
+    print_status "Checking required dependencies..."
+    
+    local missing_deps=()
+    
+    # Check for required commands
+    if ! command -v curl >/dev/null 2>&1; then
+        missing_deps+=("curl")
+    fi
+    
+    if ! command -v systemctl >/dev/null 2>&1; then
+        missing_deps+=("systemd")
+    fi
+    
+    # fallocate is optional, we have dd fallback
+    if ! command -v fallocate >/dev/null 2>&1; then
+        print_warning "fallocate not available, will use dd for swap creation (slower)"
+    fi
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        print_error "Missing required dependencies: ${missing_deps[*]}"
+        print_status "Installing missing dependencies..."
+        apt-get update
+        for dep in "${missing_deps[@]}"; do
+            case $dep in
+                "curl")
+                    apt-get install -y curl
+                    ;;
+                "systemd")
+                    print_error "systemd is required but not available"
+                    exit 1
+                    ;;
+            esac
+        done
+        print_success "Dependencies installed"
+    else
+        print_success "All required dependencies are available"
+    fi
+}
+
 # Function to require running as actual root user (not via sudo)
 check_root() {
     if [[ $(id -u) -ne 0 ]]; then
@@ -286,6 +339,8 @@ main() {
     print_status "Starting VPS automated setup for Debian..."
     
     check_root
+    check_debian
+    check_dependencies
     check_setup_status
     get_hostname
     update_system
@@ -293,7 +348,13 @@ main() {
     setup_ssh
     setup_swap
     install_docker
-    setup_dozzle
+    
+    # Setup Dozzle with error handling
+    if ! setup_dozzle; then
+        print_error "Dozzle setup failed, but continuing with other setup tasks"
+        print_status "You can manually start Dozzle later with: docker compose -f /root/dozzle/docker-compose.yml up -d"
+    fi
+    
     create_setup_marker
     display_final_info
     
