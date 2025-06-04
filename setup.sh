@@ -355,9 +355,13 @@ setup_dozzle() {
     cp "$COMPOSE_SOURCE" "$DOZZLE_DIR/docker-compose.yml"
     print_success "Copied docker-compose.yml to $DOZZLE_DIR"
     
+    # Create .env file with hostname for docker-compose
+    echo "HOSTNAME=$NEW_HOSTNAME" > "$DOZZLE_DIR/.env"
+    print_success "Created .env file with hostname: $NEW_HOSTNAME"
+    
     # Launch Dozzle
     print_status "Starting Dozzle container..."
-    docker compose -f "$DOZZLE_DIR/docker-compose.yml" up -d
+    cd "$DOZZLE_DIR" && docker compose up -d
     
     # Verify it's running
     if docker ps | grep -q dozzle; then
