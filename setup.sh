@@ -381,6 +381,33 @@ setup_dozzle() {
     fi
 }
 
+# Function to setup Ansible user
+setup_ansible_user() {
+    print_status "Setting up Ansible user..."
+    
+    # Check for ansible-user-setup.sh in current directory
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    ANSIBLE_SETUP="$SCRIPT_DIR/ansible-user-setup.sh"
+    
+    if [[ ! -f "$ANSIBLE_SETUP" ]]; then
+        print_error "ansible-user-setup.sh not found in $SCRIPT_DIR!"
+        print_error "Please ensure it exists in the same directory as this script"
+        return 1
+    fi
+    
+    # Make sure the script is executable
+    chmod +x "$ANSIBLE_SETUP"
+    
+    # Run the ansible user setup script
+    print_status "Running ansible user setup script..."
+    if bash "$ANSIBLE_SETUP"; then
+        print_success "Ansible user setup completed successfully"
+    else
+        print_error "Failed to setup Ansible user!"
+        return 1
+    fi
+}
+
 # Function to prompt for reboot
 prompt_reboot() {
     echo
@@ -424,6 +451,7 @@ display_final_info() {
     echo "  Docker: Installed and running"
     echo "  Dozzle: Running on port 7001"
     echo "  Shell: Oh My Zsh (default for new sessions)"
+    echo "  Ansible User: Created and configured"
     echo
     echo "Security:"
     echo "  SSH Password: Disabled"
@@ -459,6 +487,12 @@ main() {
     if ! setup_dozzle; then
         print_error "Dozzle setup failed, but continuing with other setup tasks"
         print_status "You can manually start Dozzle later with: docker compose -f /root/dozzle/docker-compose.yml up -d"
+    fi
+    
+    # Setup Ansible user with error handling
+    if ! setup_ansible_user; then
+        print_error "Ansible user setup failed, but continuing with other setup tasks"
+        print_status "You can manually setup the Ansible user later with: bash /path/to/ansible-user-setup.sh"
     fi
     
     create_setup_marker
