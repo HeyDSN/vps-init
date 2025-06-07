@@ -36,7 +36,7 @@ mkdir -p /home/ansible/.ssh || error "Failed to create .ssh directory"
 # Add public key to authorized_keys file
 # Replace the text between EOF markers with your actual public key
 cat << EOF > /home/ansible/.ssh/authorized_keys || error "Failed to create authorized_keys file"
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBuLHrI18E1ypBdN5nGI6SE92pfsqWHoKgenxijpV1ch
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINOlf9Vmyftcka1HExNjB47t4nLOTVnfi0X8BWip17k7
 EOF
 
 # Set correct ownership and permissions
