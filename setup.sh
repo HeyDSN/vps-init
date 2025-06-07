@@ -27,6 +27,7 @@ SETUP_MARKER="/root/.vps-setup-complete"
 # Comment for machine name can be omitted
 PUBLIC_KEYS=(
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0i/CIwDYPTMOFRKqRaGFKarGt3ENdX5J1XSTA8dPhg"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAxHl28iSIwODmW6EE7H3j4cQzv1erGq0cLoCSRIc5Am"
 )
 
 # Function to check if script has been run before
