@@ -21,8 +21,11 @@ apt install -y sudo || error "Failed to install sudo"
 # Create ansible user
 useradd -m -s /bin/bash ansible || error "Failed to create ansible user"
 
-# Set password for ansible user (you may want to change this)
-echo "ansible:ansible" | chpasswd || error "Failed to set password for ansible user"
+# Generate a random password
+ANSIBLE_PASSWORD=$(openssl rand -base64 12)
+
+# Set password for ansible user
+echo "ansible:$ANSIBLE_PASSWORD" | chpasswd || error "Failed to set password for ansible user"
 
 # Add ansible user to sudo group
 usermod -aG sudo ansible || error "Failed to add ansible user to sudo group"
@@ -45,3 +48,5 @@ chmod 700 /home/ansible/.ssh || error "Failed to set permissions on .ssh directo
 chmod 600 /home/ansible/.ssh/authorized_keys || error "Failed to set permissions on authorized_keys file"
 
 echo "Ansible user setup completed successfully!"
+echo "Generated password for ansible user: $ANSIBLE_PASSWORD"
+echo "Please save this password in a secure location as it will not be shown again."
