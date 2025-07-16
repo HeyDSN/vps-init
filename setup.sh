@@ -769,10 +769,23 @@ EOF
         echo "MIRROR_DOWNLOAD=0" >> /etc/rkhunter.conf
     fi
     
-    # Run initial scan with appropriate settings
+    # Skip database update and just create property database
+    print_status "Initializing rkhunter (skipping database update)..."
+    
+    # Create a file to skip the update
+    touch /var/lib/rkhunter/db/rkhunter_update_checked
+    
+    # Fix the cron job to prevent future WEB_CMD errors
+    if [ -f /etc/cron.daily/rkhunter ]; then
+        print_status "Fixing rkhunter cron job to prevent future WEB_CMD errors..."
+        cp /etc/cron.daily/rkhunter /etc/cron.daily/rkhunter.backup
+        sed -i 's|/usr/bin/rkhunter --cronjob|/usr/bin/rkhunter --cronjob --noupdate|g' /etc/cron.daily/rkhunter
+    fi
+    
+    # Run initial scan with appropriate settings and no update
     print_status "Running initial rkhunter scan (this may take a while)..."
-    rkhunter --propupd --nocolors
-    rkhunter --check --skip-keypress --nocolors
+    rkhunter --propupd --nocolors --noupdate
+    rkhunter --check --skip-keypress --nocolors --noupdate
     
     print_success "Rootkit detection setup complete"
 }
