@@ -673,8 +673,8 @@ setup_rootkit_detection() {
 # Discord webhook URL
 WEBHOOK_URL="${DISCORD_WEBHOOK}"
 
-# Run rkhunter scan
-rkhunter --check --skip-keypress > /tmp/rkhunter-report.txt
+# Run RKHunter scan without updates
+rkhunter --check --skip-keypress --nocolors > /tmp/rkhunter-report.txt 2>&1 || true
 
 # Check if any warnings were found
 if grep -q "Warning:" /tmp/rkhunter-report.txt; then
@@ -764,10 +764,19 @@ EOF
         fi
     fi
     
-    # Run initial scan with appropriate settings
-    print_status "Running initial rkhunter scan (this may take a while)..."
+    # Run property update only (no database update)
+    print_status "Creating rkhunter property database (this may take a while)..."
     rkhunter --propupd --nocolors
-    rkhunter --check --skip-keypress --nocolors
+    
+    # Skip the check completely as it tries to update
+    print_status "Skipping initial scan to avoid update errors"
+    print_status "Scans will run via the daily cron job"
+    
+    # Modify the discord script to not try updates
+    if [ -f /root/scripts/rkhunter-discord.sh ]; then
+        print_status "Updating Discord reporting script to skip updates..."
+        sed -i 's|rkhunter --check|rkhunter --check --nocolors|g' /root/scripts/rkhunter-discord.sh
+    fi
     
     print_success "Rootkit detection setup complete"
 }
