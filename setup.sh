@@ -26,7 +26,7 @@ SETUP_MARKER="/root/.vps-setup-complete"
 # )
 # Comment for machine name can be omitted
 PUBLIC_KEYS=(
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK0i/CIwDYPTMOFRKqRaGFKarGt3ENdX5J1XSTA8dPhg"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICev/Xct+bpqTi0inAtGlCF/zSMQ9Qor/p1ObY9bh9Se"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAxHl28iSIwODmW6EE7H3j4cQzv1erGq0cLoCSRIc5Am"
 )
 
@@ -381,6 +381,423 @@ setup_dozzle() {
     fi
 }
 
+# Function to setup UFW firewall
+setup_firewall() {
+    print_status "Setting up UFW firewall..."
+    
+    # Check if we're in a VPS environment that might have special networking
+    IS_VPS=false
+    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
+       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
+        IS_VPS=true
+        print_status "VPS environment detected - checking for compatibility"
+    fi
+    
+    # Install UFW if not already installed
+    if ! command -v ufw >/dev/null 2>&1; then
+        print_status "Installing UFW..."
+        apt-get install -y ufw
+    fi
+    
+    # Check if iptables is available and working (some VPS environments restrict it)
+    if ! iptables -L > /dev/null 2>&1; then
+        print_warning "iptables appears to be restricted in this environment"
+        print_warning "UFW may not function properly on this VPS"
+        
+        read -p "Do you want to continue with UFW setup anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_status "Skipping UFW setup as requested"
+            return
+        fi
+    fi
+    
+    # Reset UFW to default state
+    print_status "Resetting UFW to default state..."
+    ufw --force reset
+    
+    # Set default policies
+    print_status "Setting default policies: deny incoming, allow outgoing"
+    ufw default deny incoming
+    ufw default allow outgoing
+    
+    # Allow SSH
+    print_status "Allowing SSH connections"
+    ufw allow ssh
+    
+    # Allow Dozzle port
+    print_status "Allowing Dozzle port (7001)"
+    ufw allow 7001/tcp
+    
+    # Enable UFW with error handling
+    print_status "Enabling UFW..."
+    if ! echo "y" | ufw enable; then
+        print_error "Failed to enable UFW - this may be due to VPS provider restrictions"
+        print_warning "Your VPS provider may be using their own firewall solution"
+        print_status "UFW rules have been configured but the service could not be enabled"
+        return 1
+    fi
+    
+    # Check UFW status
+    ufw status verbose
+    
+    print_success "UFW firewall configured and enabled"
+}
+
+# Function to harden system with sysctl settings
+harden_sysctl() {
+    print_status "Hardening system with sysctl security settings..."
+    
+    # Check if we're in a VPS environment
+    IS_VPS=false
+    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
+       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
+        IS_VPS=true
+        print_status "VPS environment detected - applying compatible settings"
+    fi
+    
+    # Create a security settings file
+    print_status "Creating security sysctl configuration..."
+    cat > /etc/sysctl.d/99-security.conf << 'EOF'
+# IP Spoofing protection
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Disable IP source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# Ignore ICMP broadcast requests
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Disable ICMP redirect acceptance
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Don't send ICMP redirects
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Ignore Directed pings - set to 0 (allow pings) for better connectivity testing
+net.ipv4.icmp_echo_ignore_all = 0
+
+# Increase system file descriptor limit
+fs.file-max = 100000
+
+# Protect against SYN flood attacks
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_syn_retries = 5
+net.ipv4.tcp_synack_retries = 2
+
+# TCP optimizations - safe for most VPS environments
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+
+# Disable IPv6 if not needed
+# Uncomment these if you don't use IPv6
+# net.ipv6.conf.all.disable_ipv6 = 1
+# net.ipv6.conf.default.disable_ipv6 = 1
+# net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+
+    # For VPS environments, we'll be more cautious with memory and buffer settings
+    if [ "$IS_VPS" = true ]; then
+        # Get total memory in kB
+        TOTAL_MEM=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+        
+        # If less than 4GB RAM, use more conservative buffer sizes
+        if [ "$TOTAL_MEM" -lt 4000000 ]; then
+            print_status "Detected less than 4GB RAM - using conservative TCP buffer settings"
+            cat >> /etc/sysctl.d/99-security.conf << EOF
+
+# Conservative TCP buffer settings for limited memory VPS
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_rmem = 4096 87380 4194304
+net.ipv4.tcp_wmem = 4096 65536 4194304
+EOF
+        else
+            # More generous settings for VPS with more RAM
+            cat >> /etc/sysctl.d/99-security.conf << EOF
+
+# TCP buffer settings for VPS with sufficient memory
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+EOF
+        fi
+    fi
+    
+    # Apply sysctl settings with error handling
+    print_status "Applying sysctl settings..."
+    if ! sysctl -p /etc/sysctl.d/99-security.conf; then
+        print_warning "Some sysctl settings could not be applied - this is normal in some VPS environments"
+        print_status "The compatible settings have been saved and will be applied on next boot"
+    else
+        print_success "Sysctl settings applied successfully"
+    fi
+    
+    print_success "System hardened with sysctl security settings"
+}
+
+# Function to harden SSH configuration
+harden_ssh() {
+    print_status "Hardening SSH configuration..."
+    
+    # Backup original SSH config if not already done
+    if [[ ! -f /etc/ssh/sshd_config.backup ]]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+    fi
+    
+    # Apply hardened SSH settings
+    print_status "Applying hardened SSH settings..."
+    
+    # Disable weak ciphers and MACs
+    sed -i '/^Ciphers/d' /etc/ssh/sshd_config
+    sed -i '/^MACs/d' /etc/ssh/sshd_config
+    
+    # Add strong ciphers and MACs
+    echo "# Strong encryption ciphers" >> /etc/ssh/sshd_config
+    echo "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr" >> /etc/ssh/sshd_config
+    echo "# Strong MAC algorithms" >> /etc/ssh/sshd_config
+    echo "MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256" >> /etc/ssh/sshd_config
+    
+    # Additional hardening settings
+    if ! grep -q "^ClientAliveInterval" /etc/ssh/sshd_config; then
+        echo "# Timeout settings" >> /etc/ssh/sshd_config
+        echo "ClientAliveInterval 300" >> /etc/ssh/sshd_config
+        echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
+    fi
+    
+    if ! grep -q "^MaxAuthTries" /etc/ssh/sshd_config; then
+        echo "# Login attempt limits" >> /etc/ssh/sshd_config
+        echo "MaxAuthTries 3" >> /etc/ssh/sshd_config
+    fi
+    
+    if ! grep -q "^MaxSessions" /etc/ssh/sshd_config; then
+        echo "# Session limits" >> /etc/ssh/sshd_config
+        echo "MaxSessions 5" >> /etc/ssh/sshd_config
+    else
+        # Update existing MaxSessions if it's already set
+        sed -i 's/^MaxSessions.*/MaxSessions 5/' /etc/ssh/sshd_config
+    fi
+    
+    # Restart SSH service
+    systemctl restart sshd
+    
+    print_success "SSH configuration hardened"
+}
+
+# Function to secure shared memory
+secure_shared_memory() {
+    print_status "Securing shared memory..."
+    
+    # Detect the correct shared memory path
+    SHM_PATH="/run/shm"
+    if [ ! -d "$SHM_PATH" ] && [ -d "/dev/shm" ]; then
+        SHM_PATH="/dev/shm"
+        print_status "Using $SHM_PATH for shared memory"
+    fi
+    
+    # Check if the entry already exists in fstab
+    if ! grep -q "tmpfs $SHM_PATH" /etc/fstab; then
+        print_status "Adding secure tmpfs configuration to /etc/fstab..."
+        echo "tmpfs $SHM_PATH tmpfs defaults,noexec,nosuid 0 0" >> /etc/fstab
+        print_success "Shared memory secured in fstab"
+    else
+        print_status "Shared memory already secured in fstab"
+    fi
+    
+    # Apply the mount options immediately
+    print_status "Applying secure mount options..."
+    if mount | grep -q " on $SHM_PATH "; then
+        mount -o remount,noexec,nosuid $SHM_PATH
+        print_success "Mount options applied successfully"
+    else
+        print_warning "Could not apply mount options immediately - will take effect after reboot"
+    fi
+    
+    print_success "Shared memory secured"
+}
+
+# Function to setup rootkit detection with Discord reporting
+setup_rootkit_detection() {
+    print_status "Setting up rootkit detection with rkhunter and Discord reporting..."
+    
+    # Get Discord webhook URL
+    echo
+    read -p "Enter Discord webhook URL for security reports (or press Enter to skip): " DISCORD_WEBHOOK
+    
+    # Install rkhunter and curl if not already installed
+    if ! command -v rkhunter >/dev/null 2>&1; then
+        print_status "Installing rkhunter..."
+        apt-get install -y rkhunter
+    fi
+    
+    if ! command -v curl >/dev/null 2>&1; then
+        print_status "Installing curl..."
+        apt-get install -y curl
+    fi
+    
+    # Update rkhunter database
+    print_status "Updating rkhunter database..."
+    rkhunter --update
+    
+    # Configure rkhunter to run daily checks
+    print_status "Configuring daily checks..."
+    
+    # Create a simple configuration file to enable automatic checks
+    if [ -f /etc/default/rkhunter ]; then
+        sed -i 's/CRON_DAILY_RUN=.*/CRON_DAILY_RUN="true"/' /etc/default/rkhunter
+        sed -i 's/REPORT_EMAIL=.*/REPORT_EMAIL="root"/' /etc/default/rkhunter
+    fi
+    
+    # Create Discord reporting script if webhook URL was provided
+    if [[ -n "$DISCORD_WEBHOOK" ]]; then
+        print_status "Creating Discord reporting script..."
+        
+        # Create the script directory if it doesn't exist
+        mkdir -p /root/scripts
+        
+        # Create the reporting script with the webhook URL directly inserted
+        cat > /root/scripts/rkhunter-discord.sh << EOF
+#!/bin/bash
+
+# RKHunter to Discord reporting script
+
+# Discord webhook URL
+WEBHOOK_URL="${DISCORD_WEBHOOK}"
+
+# Run rkhunter scan
+rkhunter --check --skip-keypress > /tmp/rkhunter-report.txt
+
+# Check if any warnings were found
+if grep -q "Warning:" /tmp/rkhunter-report.txt; then
+    # Extract warnings
+    WARNINGS=\$(grep -A 2 "Warning:" /tmp/rkhunter-report.txt | head -n 20)
+    
+    # Get hostname and IP
+    HOSTNAME=\$(hostname)
+    IP=\$(hostname -I | awk '{print \$1}')
+    
+    # Create message
+    MESSAGE="⚠️ **RKHunter Warning on \$HOSTNAME (\$IP)**\n\n\`\`\`\n\$WARNINGS\n\`\`\`\n\nFull report available on the server at /tmp/rkhunter-report.txt"
+    
+    # Send to Discord
+    curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
+else
+    # No warnings, send a simple success message
+    HOSTNAME=\$(hostname)
+    IP=\$(hostname -I | awk '{print \$1}')
+    
+    # Send success message once a week (on Sundays)
+    if [ \$(date +%u) -eq 7 ]; then
+        MESSAGE="✅ **RKHunter scan completed successfully on \$HOSTNAME (\$IP)**\n\nNo warnings or issues detected."
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
+    fi
+fi
+
+# Clean up
+rm /tmp/rkhunter-report.txt
+EOF
+        
+        # Make the script executable
+        chmod +x /root/scripts/rkhunter-discord.sh
+        
+        # Create a daily cron job for the script
+        echo "# Run RKHunter scan and report to Discord daily at 3 AM" > /etc/cron.d/rkhunter-discord
+        echo "0 3 * * * root /root/scripts/rkhunter-discord.sh" >> /etc/cron.d/rkhunter-discord
+        
+        print_success "Discord reporting configured. Reports will be sent daily at 3 AM if issues are found."
+        print_success "Success reports will be sent only once a week (on Sundays)."
+    else
+        print_status "Discord webhook not provided. Skipping Discord integration."
+    fi
+    
+    # Configure rkhunter for VPS environment to reduce false positives
+    print_status "Configuring rkhunter for VPS environment..."
+    
+    # Check if we're in a VPS environment
+    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
+       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
+        
+        print_status "VPS environment detected - adjusting rkhunter configuration to reduce false positives"
+        
+        # Create or update rkhunter.conf.local with VPS-friendly settings
+        cat > /etc/rkhunter.conf.local << EOF
+# VPS-friendly settings to reduce false positives
+ALLOW_SSH_ROOT_USER=yes
+ALLOW_SSH_PROT_V1=no
+SKIP_INODE_CHECK=yes
+# Only disable tests that cause false positives on VPS, enable security-critical ones
+DISABLE_TESTS="suspscan deleted_files promisc sniffer possible_dhcp localhost"
+HASH_CMD_CHECK=none
+HASH_FUNC=sha256
+EOF
+        print_status "Enabled security-critical tests: hidden_procs, hidden_ports, apps, packet_cap_apps"
+        print_status "Disabled tests that cause false positives on VPS environments"
+    fi
+    
+    # Run initial scan with appropriate settings
+    print_status "Running initial rkhunter scan (this may take a while)..."
+    rkhunter --propupd
+    rkhunter --check --skip-keypress
+    
+    print_success "Rootkit detection setup complete"
+}
+
+# Function to setup fail2ban
+setup_fail2ban() {
+    print_status "Setting up fail2ban..."
+    
+    # Install fail2ban if not already installed
+    if ! command -v fail2ban-server >/dev/null 2>&1; then
+        print_status "Installing fail2ban..."
+        apt-get install -y fail2ban
+    fi
+    
+    # Create a basic jail.local configuration
+    print_status "Configuring fail2ban..."
+    cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+# Ban hosts for one day
+bantime = 24h
+
+# Retry interval
+findtime = 5m
+
+# Number of failures before a host gets banned
+maxretry = 5
+
+[sshd]
+mode = aggressive
+enabled = true
+filter = sshd
+port = ssh
+logpath = journalctl -u sshd
+backend = systemd
+maxretry = 5
+bantime = 24h
+findtime = 5m
+EOF
+    
+    # Restart fail2ban
+    print_status "Restarting fail2ban service..."
+    systemctl enable fail2ban
+    systemctl restart fail2ban
+    
+    # Check fail2ban status
+    print_status "Checking fail2ban status..."
+    fail2ban-client status
+    
+    print_success "fail2ban configured and enabled"
+}
+
 # Function to setup Ansible user
 setup_ansible_user() {
     print_status "Setting up Ansible user..."
@@ -455,8 +872,12 @@ display_final_info() {
     echo
     echo "Security:"
     echo "  SSH Password: Disabled"
-    echo "  SSH Key: Configured"
-    echo "  Firewall: Managed at network level"
+    echo "  SSH Key: Configured with hardened ciphers"
+    echo "  Firewall: UFW enabled (SSH allowed)"
+    echo "  Fail2ban: Enabled (protects against brute force)"
+    echo "  Kernel: Hardened with secure sysctl settings"
+    echo "  Memory: Secured shared memory"
+    echo "  Rootkit Detection: Daily scans configured"
     echo
     echo "Next Steps:"
     echo "  1. Test SSH connection with your key"
@@ -479,7 +900,13 @@ main() {
     update_system
     change_hostname
     setup_ssh
+    harden_ssh
     setup_swap
+    setup_firewall
+    setup_fail2ban
+    harden_sysctl
+    secure_shared_memory
+    setup_rootkit_detection
     install_docker
     install_oh_my_zsh
     
