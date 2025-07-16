@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 # Configuration variables
 SWAP_SIZE="1G"
 SETUP_MARKER="/root/.vps-setup-complete"
+SETUP_MARKER_PACKAGES="/root/.vps-setup-packages"
 
 # Public keys
 # EXAMPLE
@@ -90,6 +91,31 @@ check_debian() {
     print_status "Detected Debian version: $debian_version"
 }
 
+# Function to install packages first and exit, create a marker file for packages installed
+install_packages() {
+    if [[ -f "$SETUP_MARKER_PACKAGES" ]]; then
+        print_warning "Packages have already been installed!"
+        echo "Setup marker found at: $SETUP_MARKER_PACKAGES"
+        echo "Setup date: $(cat $SETUP_MARKER_PACKAGES)"
+        echo
+        return 0
+    fi
+    print_status "Installing packages..."
+    apt-get update
+    apt-get upgrade -y
+    apt-get install -y nano htop git unzip
+    apt-get autoremove -y
+    apt-get clean
+    echo "Packages installed on $(date)" > $SETUP_MARKER_PACKAGES
+    print_success "Packages installed"
+    
+    # First run behavior - stop after package installation
+    echo
+    print_warning "First setup phase complete: packages installed"
+    print_status "Please run this script again to complete the full setup"
+    exit 0
+}
+
 # Function to check required dependencies
 check_dependencies() {
     print_status "Checking required dependencies..."
@@ -118,11 +144,11 @@ check_dependencies() {
             case $dep in
                 "curl")
                     apt-get install -y curl
-                    ;;
+                ;;
                 "systemd")
                     print_error "systemd is required but not available"
                     exit 1
-                    ;;
+                ;;
             esac
         done
         print_success "Dependencies installed"
@@ -387,8 +413,8 @@ setup_firewall() {
     
     # Check if we're in a VPS environment that might have special networking
     IS_VPS=false
-    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
-       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
+    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null ||
+    dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
         IS_VPS=true
         print_status "VPS environment detected - checking for compatibility"
     fi
@@ -450,8 +476,8 @@ harden_sysctl() {
     
     # Check if we're in a VPS environment
     IS_VPS=false
-    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
-       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
+    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null ||
+    dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
         IS_VPS=true
         print_status "VPS environment detected - applying compatible settings"
     fi
@@ -503,7 +529,7 @@ net.ipv4.tcp_sack = 1
 # net.ipv6.conf.default.disable_ipv6 = 1
 # net.ipv6.conf.lo.disable_ipv6 = 1
 EOF
-
+    
     # For VPS environments, we'll be more cautious with memory and buffer settings
     if [ "$IS_VPS" = true ]; then
         # Get total memory in kB
@@ -623,87 +649,6 @@ secure_shared_memory() {
     fi
     
     print_success "Shared memory secured"
-}
-
-# Function to setup security auditing with Lynis
-setup_rootkit_detection() {
-    print_status "Setting up security auditing with Lynis..."
-    
-    # Get Discord webhook URL
-    echo
-    read -p "Enter Discord webhook URL for security reports (or press Enter to skip): " DISCORD_WEBHOOK
-    
-    # Install Lynis if not already installed
-    if ! command -v lynis >/dev/null 2>&1; then
-        print_status "Installing Lynis..."
-        apt-get install -y lynis
-    fi
-    
-    # Install curl if not already installed
-    if ! command -v curl >/dev/null 2>&1; then
-        print_status "Installing curl..."
-        apt-get install -y curl
-    fi
-    
-    # Create Discord reporting script if webhook URL was provided
-    if [[ -n "$DISCORD_WEBHOOK" ]]; then
-        print_status "Creating Discord reporting script for Lynis..."
-        
-        # Create the script directory if it doesn't exist
-        mkdir -p /root/scripts
-        
-        # Create the reporting script with the webhook URL directly inserted
-        cat > /root/scripts/lynis-discord.sh << EOF
-#!/bin/bash
-
-# Lynis to Discord reporting script
-
-# Discord webhook URL
-WEBHOOK_URL="${DISCORD_WEBHOOK}"
-
-# Run Lynis audit
-lynis audit system --quick --no-colors > /tmp/lynis-report.txt 2>&1
-
-# Get the score and warnings
-SCORE=\$(grep "Hardening index" /tmp/lynis-report.txt | awk '{print \$NF}')
-WARNINGS=\$(grep -A 3 "Warnings" /tmp/lynis-report.txt | tail -n 3)
-SUGGESTIONS=\$(grep -A 10 "Suggestions" /tmp/lynis-report.txt | tail -n 10)
-
-# Get hostname and IP
-HOSTNAME=\$(hostname)
-IP=\$(hostname -I | awk '{print \$1}')
-
-# Create message
-MESSAGE="🛡️ **Lynis Security Audit for \$HOSTNAME (\$IP)**\n\n**Hardening Score:** \$SCORE\n\n**Warnings:**\n\`\`\`\n\$WARNINGS\n\`\`\`\n\n**Top Suggestions:**\n\`\`\`\n\$SUGGESTIONS\n\`\`\`\n\nFull report available on the server at /tmp/lynis-report.txt"
-
-# Send to Discord
-curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
-
-# Clean up
-rm /tmp/lynis-report.txt
-EOF
-        
-        # Make the script executable
-        chmod +x /root/scripts/lynis-discord.sh
-        
-        # Create a weekly cron job for the script (runs every Sunday at 3 AM)
-        echo "# Run Lynis security audit and report to Discord weekly on Sunday at 3 AM" > /etc/cron.d/lynis-discord
-        echo "0 3 * * 0 root /root/scripts/lynis-discord.sh" >> /etc/cron.d/lynis-discord
-        
-        print_success "Discord reporting configured. Security audit reports will be sent weekly on Sundays at 3 AM."
-    else
-        print_status "Discord webhook not provided. Skipping Discord integration."
-        
-        # Create a simple weekly cron job for Lynis without Discord reporting
-        echo "# Run Lynis security audit weekly on Sunday at 3 AM" > /etc/cron.d/lynis-audit
-        echo "0 3 * * 0 root lynis audit system --quick --no-colors > /var/log/lynis-audit.log" >> /etc/cron.d/lynis-audit
-    fi
-    
-    # Run initial audit to create baseline
-    print_status "Running initial Lynis audit (this may take a while)..."
-    lynis audit system --quick --no-colors > /dev/null
-    
-    print_success "Lynis security auditing setup complete"
 }
 
 # Function to setup fail2ban
@@ -849,7 +794,6 @@ display_final_info() {
     echo "  Fail2ban: Enabled (protects against brute force)"
     echo "  Kernel: Hardened with secure sysctl settings"
     echo "  Memory: Secured shared memory"
-    echo "  Rootkit Detection: Daily scans configured"
     echo
     echo "Next Steps:"
     echo "  1. Test SSH connection with your key"
@@ -866,19 +810,41 @@ main() {
     
     check_root
     check_debian
+    install_packages  # This will exit on first run after installing packages
     check_dependencies
     check_setup_status
     get_hostname
     update_system
     change_hostname
-    setup_ssh
-    harden_ssh
+    
+    # Setup SSH with error handling
+    if ! setup_ssh; then
+        print_error "SSH setup failed! This is critical for secure access."
+        exit 1
+    fi
+    
+    if ! harden_ssh; then
+        print_error "SSH hardening failed, but continuing with other setup tasks"
+    fi
+    
     setup_swap
-    setup_firewall
-    setup_fail2ban
-    harden_sysctl
+    
+    # Setup firewall with error handling
+    if ! setup_firewall; then
+        print_error "Firewall setup failed, but continuing with other setup tasks"
+    fi
+    
+    # Setup fail2ban with error handling
+    if ! setup_fail2ban; then
+        print_error "fail2ban setup failed, but continuing with other setup tasks"
+    fi
+    
+    # Harden system with error handling
+    if ! harden_sysctl; then
+        print_error "System hardening partially failed, but continuing with other setup tasks"
+    fi
+    
     secure_shared_memory
-    setup_rootkit_detection
     install_docker
     install_oh_my_zsh
     
