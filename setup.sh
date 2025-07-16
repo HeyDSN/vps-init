@@ -388,22 +388,49 @@ install_oh_my_zsh() {
         apt-get install -y zsh
     fi
     
-    # Check if Oh My Zsh is already installed
-    if [[ -d "/root/.oh-my-zsh" ]]; then
-        print_warning "Oh My Zsh already installed, skipping..."
-        return
+    # Install git if not already installed (needed for plugins)
+    if ! command -v git >/dev/null 2>&1; then
+        print_status "Installing git for Oh My Zsh plugins..."
+        apt-get install -y git
     fi
     
-    # Install Oh My Zsh (unattended installation)
-    print_status "Downloading and installing Oh My Zsh..."
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    # Check if Oh My Zsh is already installed
+    if [[ -d "/root/.oh-my-zsh" ]]; then
+        print_warning "Oh My Zsh already installed, continuing with plugin setup..."
+    else
+        # Install Oh My Zsh (unattended installation)
+        print_status "Downloading and installing Oh My Zsh..."
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        
+        # Change default shell to zsh for root
+        print_status "Changing default shell to zsh for root user..."
+        chsh -s $(which zsh) root
+    fi
     
-    # Change default shell to zsh for root
-    print_status "Changing default shell to zsh for root user..."
-    chsh -s $(which zsh) root
+    # Install additional plugins
+    print_status "Installing Oh My Zsh plugins..."
     
-    # Create a basic .zshrc configuration
-    print_status "Configuring Oh My Zsh..."
+    # Define custom plugins directory
+    ZSH_CUSTOM="/root/.oh-my-zsh/custom"
+    
+    # Install zsh-autosuggestions
+    if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]]; then
+        print_status "Installing zsh-autosuggestions plugin..."
+        git clone https://github.com/zsh-users/zsh-autosuggestions.git $ZSH_CUSTOM/plugins/zsh-autosuggestions
+    else
+        print_status "zsh-autosuggestions already installed"
+    fi
+    
+    # Install zsh-syntax-highlighting
+    if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]]; then
+        print_status "Installing zsh-syntax-highlighting plugin..."
+        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $ZSH_CUSTOM/plugins/zsh-syntax-highlighting
+    else
+        print_status "zsh-syntax-highlighting already installed"
+    fi
+    
+    # Create a .zshrc configuration with plugins enabled
+    print_status "Configuring Oh My Zsh with plugins..."
     cat > /root/.zshrc << 'EOF'
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -412,7 +439,7 @@ export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="robbyrussell"
 
 # Which plugins would you like to load?
-plugins=(git docker docker-compose)
+plugins=(git docker docker-compose zsh-autosuggestions zsh-syntax-highlighting)
 
 source $ZSH/oh-my-zsh.sh
 
@@ -436,7 +463,7 @@ alias dcd='docker compose down'
 alias dcl='docker compose logs -f'
 EOF
     
-    print_success "Oh My Zsh installed and configured"
+    print_success "Oh My Zsh installed and configured with enhanced plugins"
     print_warning "Zsh will be the default shell for new sessions after reboot"
 }
 
