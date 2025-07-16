@@ -820,27 +820,53 @@ EOF
 setup_ansible_user() {
     print_status "Setting up Ansible user..."
     
-    # Check for ansible-user-setup.sh in current directory
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-    ANSIBLE_SETUP="$SCRIPT_DIR/ansible-user-setup.sh"
+    # Reset to original script directory regardless of where we are now
+    ORIGINAL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    ANSIBLE_SETUP="$ORIGINAL_DIR/ansible-user-setup.sh"
+    
+    # Store the ansible user password for the summary
+    ANSIBLE_USER_PASSWORD=""
     
     if [[ ! -f "$ANSIBLE_SETUP" ]]; then
-        print_error "ansible-user-setup.sh not found in $SCRIPT_DIR!"
+        print_error "ansible-user-setup.sh not found in $ORIGINAL_DIR!"
         print_error "Please ensure it exists in the same directory as this script"
+        SETUP_SUMMARY+="\n- ❌ Ansible user setup: FAILED (script not found)"
         return 1
     fi
     
     # Make sure the script is executable
     chmod +x "$ANSIBLE_SETUP"
     
-    # Run the ansible user setup script
+    # Run the ansible user setup script and capture its output
     print_status "Running ansible user setup script..."
-    if bash "$ANSIBLE_SETUP"; then
+    ANSIBLE_OUTPUT=$(bash "$ANSIBLE_SETUP" 2>&1)
+    ANSIBLE_RESULT=$?
+    
+    # Extract the password from the output
+    ANSIBLE_USER_PASSWORD=$(echo "$ANSIBLE_OUTPUT" | grep -o 'Password: [^ ]*' | cut -d' ' -f2)
+    
+    if [ $ANSIBLE_RESULT -eq 0 ]; then
         print_success "Ansible user setup completed successfully"
+        if [ -n "$ANSIBLE_USER_PASSWORD" ]; then
+            SETUP_SUMMARY+="\n- ✅ Ansible user setup: SUCCESS (Password: $ANSIBLE_USER_PASSWORD)"
+        else
+            SETUP_SUMMARY+="\n- ✅ Ansible user setup: SUCCESS"
+        fi
     else
         print_error "Failed to setup Ansible user!"
+        SETUP_SUMMARY+="\n- ❌ Ansible user setup: FAILED"
         return 1
     fi
+}
+
+# Function to display setup summary
+display_summary() {
+    echo
+    echo "=========================================="
+    print_status "SETUP SUMMARY"
+    echo "=========================================="
+    echo -e "$SETUP_SUMMARY"
+    echo "=========================================="
 }
 
 # Function to prompt for reboot
@@ -894,24 +920,27 @@ display_final_info() {
     echo "  Firewall: UFW enabled (SSH allowed)"
     echo "  Fail2ban: Enabled (protects against brute force)"
     echo "  Kernel: Hardened with secure sysctl settings"
-    echo "  Memory: Secured shared memory"
-    echo
-    echo "Next Steps:"
-    echo "  1. Test SSH connection with your key"
-    echo "  2. Access Dozzle at http://$(hostname -I | awk '{print $1}'):7001"
-    echo "  3. Configure additional services as needed"
-    echo
-    print_warning "IMPORTANT: Test SSH key authentication before closing this session!"
-    echo
-}
-
-# Main execution
 main() {
     print_status "Starting VPS automated setup for Debian..."
     
+    # Initialize setup summary
+    SETUP_SUMMARY=""
+    
+    # Store original script directory
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    
     check_root
     check_debian
-    install_packages  # This will exit on first run after installing packages
+    
+    # Install packages (first phase)
+    if ! install_packages; then  # This will exit on first run after installing packages
+        print_error "Package installation failed or needs a second run"
+        SETUP_SUMMARY+="\n- ❌ Package installation: FAILED or needs second run"
+        exit 1
+    else
+        SETUP_SUMMARY+="\n- ✅ Package installation: SUCCESS"
+    fi
+    
     check_dependencies
     check_setup_status
     get_hostname
@@ -921,48 +950,101 @@ main() {
     # Setup SSH with error handling
     if ! setup_ssh; then
         print_error "SSH setup failed! This is critical for secure access."
+        SETUP_SUMMARY+="\n- ❌ SSH setup: FAILED"
         exit 1
+    else
+        SETUP_SUMMARY+="\n- ✅ SSH setup: SUCCESS"
     fi
     
     if ! harden_ssh; then
         print_error "SSH hardening failed, but continuing with other setup tasks"
+        SETUP_SUMMARY+="\n- ⚠️ SSH hardening: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ SSH hardening: SUCCESS"
     fi
     
-    setup_swap
+    if ! setup_swap; then
+        print_error "Swap setup had issues, but continuing"
+        SETUP_SUMMARY+="\n- ⚠️ Swap setup: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Swap setup: SUCCESS"
+    fi
     
     # Setup firewall with error handling
     if ! setup_firewall; then
         print_error "Firewall setup failed, but continuing with other setup tasks"
+        SETUP_SUMMARY+="\n- ⚠️ Firewall setup: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Firewall setup: SUCCESS"
     fi
     
     # Setup fail2ban with error handling
     if ! setup_fail2ban; then
         print_error "fail2ban setup failed, but continuing with other setup tasks"
+        SETUP_SUMMARY+="\n- ⚠️ fail2ban setup: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ fail2ban setup: SUCCESS"
     fi
     
     # Harden system with error handling
     if ! harden_sysctl; then
         print_error "System hardening partially failed, but continuing with other setup tasks"
+        SETUP_SUMMARY+="\n- ⚠️ System hardening: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ System hardening: SUCCESS"
     fi
     
-    secure_shared_memory
-    install_docker
-    install_oh_my_zsh
+    if ! secure_shared_memory; then
+        print_error "Shared memory security had issues, but continuing"
+        SETUP_SUMMARY+="\n- ⚠️ Shared memory security: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Shared memory security: SUCCESS"
+    fi
+    
+    if ! install_docker; then
+        print_error "Docker installation had issues, but continuing"
+        SETUP_SUMMARY+="\n- ⚠️ Docker installation: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Docker installation: SUCCESS"
+    fi
+    
+    if ! install_oh_my_zsh; then
+        print_error "Oh My Zsh installation had issues, but continuing"
+        SETUP_SUMMARY+="\n- ⚠️ Oh My Zsh installation: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Oh My Zsh installation: SUCCESS"
+    fi
+    
+    # Save current directory before dozzle setup
+    CURRENT_DIR=$(pwd)
     
     # Setup Dozzle with error handling
     if ! setup_dozzle; then
         print_error "Dozzle setup failed, but continuing with other setup tasks"
         print_status "You can manually start Dozzle later with: docker compose -f /root/dozzle/docker-compose.yml up -d"
+        SETUP_SUMMARY+="\n- ⚠️ Dozzle setup: PARTIAL (completed with warnings)"
+    else
+        SETUP_SUMMARY+="\n- ✅ Dozzle setup: SUCCESS"
     fi
+    
+    # Return to original script directory
+    cd "$SCRIPT_DIR"
     
     # Setup Ansible user with error handling
     if ! setup_ansible_user; then
         print_error "Ansible user setup failed, but continuing with other setup tasks"
-        print_status "You can manually setup the Ansible user later with: bash /path/to/ansible-user-setup.sh"
+        print_status "You can manually setup the Ansible user later with: bash $SCRIPT_DIR/ansible-user-setup.sh"
+        # Note: The ansible setup function itself adds to SETUP_SUMMARY
     fi
     
+    # Return to user's original directory
+    cd "$CURRENT_DIR"
+    
     create_setup_marker
+    SETUP_SUMMARY+="\n- ✅ Overall setup: COMPLETE"
+    
     display_final_info
+    display_summary
     prompt_reboot
     
     print_success "Setup script completed successfully!"
