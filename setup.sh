@@ -731,17 +731,9 @@ EOF
         # Create or update rkhunter.conf.local with VPS-friendly settings
         cat > /etc/rkhunter.conf.local << EOF
 # VPS-friendly settings to reduce false positives
-ALLOW_SSH_ROOT_USER=yes
-ALLOW_SSH_PROT_V1=no
-SKIP_INODE_CHECK=yes
+ALLOW_SSH_ROOT_USER=1
 # Only disable tests that cause false positives on VPS, enable security-critical ones
-DISABLE_TESTS="suspscan deleted_files promisc sniffer possible_dhcp localhost"
-HASH_CMD_CHECK=none
-HASH_FUNC=sha256
-# Fix for WEB_CMD issue
-WEB_CMD=""
-UPDATE_MIRRORS=0
-MIRROR_DOWNLOAD=0
+DISABLE_TESTS=suspscan deleted_files promisc
 EOF
         print_status "Enabled security-critical tests: hidden_procs, hidden_ports, apps, packet_cap_apps"
         print_status "Disabled tests that cause false positives on VPS environments"
@@ -755,37 +747,27 @@ EOF
         echo "WEB_CMD=""" >> /etc/rkhunter.conf
     fi
     
-    # Disable update mirrors in global config
-    if grep -q "^UPDATE_MIRRORS=" /etc/rkhunter.conf; then
-        sed -i 's|^UPDATE_MIRRORS=.*|UPDATE_MIRRORS=0|' /etc/rkhunter.conf
-    else
-        echo "UPDATE_MIRRORS=0" >> /etc/rkhunter.conf
-    fi
-    
-    # Disable mirror downloads in global config
-    if grep -q "^MIRROR_DOWNLOAD=" /etc/rkhunter.conf; then
-        sed -i 's|^MIRROR_DOWNLOAD=.*|MIRROR_DOWNLOAD=0|' /etc/rkhunter.conf
-    else
-        echo "MIRROR_DOWNLOAD=0" >> /etc/rkhunter.conf
-    fi
-    
     # Skip database update and just create property database
-    print_status "Initializing rkhunter (skipping database update)..."
+    print_status "Initializing rkhunter..."
     
     # Create a file to skip the update
+    mkdir -p /var/lib/rkhunter/db
     touch /var/lib/rkhunter/db/rkhunter_update_checked
     
-    # Fix the cron job to prevent future WEB_CMD errors
+    # Fix the cron job to prevent future update errors
     if [ -f /etc/cron.daily/rkhunter ]; then
-        print_status "Fixing rkhunter cron job to prevent future WEB_CMD errors..."
+        print_status "Modifying rkhunter cron job..."
         cp /etc/cron.daily/rkhunter /etc/cron.daily/rkhunter.backup
-        sed -i 's|/usr/bin/rkhunter --cronjob|/usr/bin/rkhunter --cronjob --noupdate|g' /etc/cron.daily/rkhunter
+        # Add --noupdate if available in this version
+        if rkhunter --help 2>&1 | grep -q -- "--noupdate"; then
+            sed -i 's|/usr/bin/rkhunter --cronjob|/usr/bin/rkhunter --cronjob --noupdate|g' /etc/cron.daily/rkhunter
+        fi
     fi
     
-    # Run initial scan with appropriate settings and no update
+    # Run initial scan with appropriate settings
     print_status "Running initial rkhunter scan (this may take a while)..."
-    rkhunter --propupd --nocolors --noupdate
-    rkhunter --check --skip-keypress --nocolors --noupdate
+    rkhunter --propupd --nocolors
+    rkhunter --check --skip-keypress --nocolors
     
     print_success "Rootkit detection setup complete"
 }
