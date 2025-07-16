@@ -920,6 +920,10 @@ display_final_info() {
     echo "  Firewall: UFW enabled (SSH allowed)"
     echo "  Fail2ban: Enabled (protects against brute force)"
     echo "  Kernel: Hardened with secure sysctl settings"
+    echo "  Memory: Secured shared memory"
+}
+
+# Main function
 main() {
     print_status "Starting VPS automated setup for Debian..."
     
