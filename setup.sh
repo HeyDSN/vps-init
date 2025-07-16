@@ -625,160 +625,85 @@ secure_shared_memory() {
     print_success "Shared memory secured"
 }
 
-# Function to setup rootkit detection with Discord reporting
+# Function to setup security auditing with Lynis
 setup_rootkit_detection() {
-    print_status "Setting up rootkit detection with rkhunter and Discord reporting..."
+    print_status "Setting up security auditing with Lynis..."
     
     # Get Discord webhook URL
     echo
     read -p "Enter Discord webhook URL for security reports (or press Enter to skip): " DISCORD_WEBHOOK
     
-    # Install rkhunter and curl if not already installed
-    if ! command -v rkhunter >/dev/null 2>&1; then
-        print_status "Installing rkhunter..."
-        apt-get install -y rkhunter
+    # Install Lynis if not already installed
+    if ! command -v lynis >/dev/null 2>&1; then
+        print_status "Installing Lynis..."
+        apt-get install -y lynis
     fi
     
+    # Install curl if not already installed
     if ! command -v curl >/dev/null 2>&1; then
         print_status "Installing curl..."
         apt-get install -y curl
     fi
     
-    # Update rkhunter database
-    print_status "Updating rkhunter database..."
-    rkhunter --update
-    
-    # Configure rkhunter to run daily checks
-    print_status "Configuring daily checks..."
-    
-    # Create a simple configuration file to enable automatic checks
-    if [ -f /etc/default/rkhunter ]; then
-        sed -i 's/CRON_DAILY_RUN=.*/CRON_DAILY_RUN="true"/' /etc/default/rkhunter
-        sed -i 's/REPORT_EMAIL=.*/REPORT_EMAIL="root"/' /etc/default/rkhunter
-    fi
-    
     # Create Discord reporting script if webhook URL was provided
     if [[ -n "$DISCORD_WEBHOOK" ]]; then
-        print_status "Creating Discord reporting script..."
+        print_status "Creating Discord reporting script for Lynis..."
         
         # Create the script directory if it doesn't exist
         mkdir -p /root/scripts
         
         # Create the reporting script with the webhook URL directly inserted
-        cat > /root/scripts/rkhunter-discord.sh << EOF
+        cat > /root/scripts/lynis-discord.sh << EOF
 #!/bin/bash
 
-# RKHunter to Discord reporting script
+# Lynis to Discord reporting script
 
 # Discord webhook URL
 WEBHOOK_URL="${DISCORD_WEBHOOK}"
 
-# Run RKHunter scan without updates
-rkhunter --check --skip-keypress --nocolors > /tmp/rkhunter-report.txt 2>&1 || true
+# Run Lynis audit
+lynis audit system --quick --no-colors > /tmp/lynis-report.txt 2>&1
 
-# Check if any warnings were found
-if grep -q "Warning:" /tmp/rkhunter-report.txt; then
-    # Extract warnings
-    WARNINGS=\$(grep -A 2 "Warning:" /tmp/rkhunter-report.txt | head -n 20)
-    
-    # Get hostname and IP
-    HOSTNAME=\$(hostname)
-    IP=\$(hostname -I | awk '{print \$1}')
-    
-    # Create message
-    MESSAGE="⚠️ **RKHunter Warning on \$HOSTNAME (\$IP)**\n\n\`\`\`\n\$WARNINGS\n\`\`\`\n\nFull report available on the server at /tmp/rkhunter-report.txt"
-    
-    # Send to Discord
-    curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
-else
-    # No warnings, send a simple success message
-    HOSTNAME=\$(hostname)
-    IP=\$(hostname -I | awk '{print \$1}')
-    
-    # Send success message once a week (on Sundays)
-    if [ \$(date +%u) -eq 7 ]; then
-        MESSAGE="✅ **RKHunter scan completed successfully on \$HOSTNAME (\$IP)**\n\nNo warnings or issues detected."
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
-    fi
-fi
+# Get the score and warnings
+SCORE=\$(grep "Hardening index" /tmp/lynis-report.txt | awk '{print \$NF}')
+WARNINGS=\$(grep -A 3 "Warnings" /tmp/lynis-report.txt | tail -n 3)
+SUGGESTIONS=\$(grep -A 10 "Suggestions" /tmp/lynis-report.txt | tail -n 10)
+
+# Get hostname and IP
+HOSTNAME=\$(hostname)
+IP=\$(hostname -I | awk '{print \$1}')
+
+# Create message
+MESSAGE="🛡️ **Lynis Security Audit for \$HOSTNAME (\$IP)**\n\n**Hardening Score:** \$SCORE\n\n**Warnings:**\n\`\`\`\n\$WARNINGS\n\`\`\`\n\n**Top Suggestions:**\n\`\`\`\n\$SUGGESTIONS\n\`\`\`\n\nFull report available on the server at /tmp/lynis-report.txt"
+
+# Send to Discord
+curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"\$MESSAGE\"}" \$WEBHOOK_URL
 
 # Clean up
-rm /tmp/rkhunter-report.txt
+rm /tmp/lynis-report.txt
 EOF
         
         # Make the script executable
-        chmod +x /root/scripts/rkhunter-discord.sh
+        chmod +x /root/scripts/lynis-discord.sh
         
-        # Create a daily cron job for the script
-        echo "# Run RKHunter scan and report to Discord daily at 3 AM" > /etc/cron.d/rkhunter-discord
-        echo "0 3 * * * root /root/scripts/rkhunter-discord.sh" >> /etc/cron.d/rkhunter-discord
+        # Create a weekly cron job for the script (runs every Sunday at 3 AM)
+        echo "# Run Lynis security audit and report to Discord weekly on Sunday at 3 AM" > /etc/cron.d/lynis-discord
+        echo "0 3 * * 0 root /root/scripts/lynis-discord.sh" >> /etc/cron.d/lynis-discord
         
-        print_success "Discord reporting configured. Reports will be sent daily at 3 AM if issues are found."
-        print_success "Success reports will be sent only once a week (on Sundays)."
+        print_success "Discord reporting configured. Security audit reports will be sent weekly on Sundays at 3 AM."
     else
         print_status "Discord webhook not provided. Skipping Discord integration."
-    fi
-    
-    # Configure rkhunter for VPS environment to reduce false positives
-    print_status "Configuring rkhunter for VPS environment..."
-    
-    # Check if we're in a VPS environment
-    if grep -q -E 'vmx|svm|hypervisor|virtual|vbox|xen|kvm' /proc/cpuinfo /proc/devices 2>/dev/null || 
-       dmesg | grep -q -E 'VMware|KVM|Xen|VirtualBox|Hyper-V|VMX|hypervisor' 2>/dev/null; then
         
-        print_status "VPS environment detected - adjusting rkhunter configuration to reduce false positives"
-        
-        # Create or update rkhunter.conf.local with VPS-friendly settings
-        cat > /etc/rkhunter.conf.local << EOF
-# VPS-friendly settings to reduce false positives
-ALLOW_SSH_ROOT_USER=1
-# Only disable tests that cause false positives on VPS, enable security-critical ones
-DISABLE_TESTS=suspscan deleted_files promisc
-EOF
-        print_status "Enabled security-critical tests: hidden_procs, hidden_ports, apps, packet_cap_apps"
-        print_status "Disabled tests that cause false positives on VPS environments"
+        # Create a simple weekly cron job for Lynis without Discord reporting
+        echo "# Run Lynis security audit weekly on Sunday at 3 AM" > /etc/cron.d/lynis-audit
+        echo "0 3 * * 0 root lynis audit system --quick --no-colors > /var/log/lynis-audit.log" >> /etc/cron.d/lynis-audit
     fi
     
-    # Fix the global rkhunter config to prevent WEB_CMD error
-    print_status "Fixing rkhunter global configuration..."
-    if grep -q "^WEB_CMD=" /etc/rkhunter.conf; then
-        sed -i 's|^WEB_CMD=.*|WEB_CMD=""|' /etc/rkhunter.conf
-    else
-        echo "WEB_CMD=""" >> /etc/rkhunter.conf
-    fi
+    # Run initial audit to create baseline
+    print_status "Running initial Lynis audit (this may take a while)..."
+    lynis audit system --quick --no-colors > /dev/null
     
-    # Skip database update and just create property database
-    print_status "Initializing rkhunter..."
-    
-    # Create a file to skip the update
-    mkdir -p /var/lib/rkhunter/db
-    touch /var/lib/rkhunter/db/rkhunter_update_checked
-    
-    # Fix the cron job to prevent future update errors
-    if [ -f /etc/cron.daily/rkhunter ]; then
-        print_status "Modifying rkhunter cron job..."
-        cp /etc/cron.daily/rkhunter /etc/cron.daily/rkhunter.backup
-        # Add --noupdate if available in this version
-        if rkhunter --help 2>&1 | grep -q -- "--noupdate"; then
-            sed -i 's|/usr/bin/rkhunter --cronjob|/usr/bin/rkhunter --cronjob --noupdate|g' /etc/cron.daily/rkhunter
-        fi
-    fi
-    
-    # Run property update only (no database update)
-    print_status "Creating rkhunter property database (this may take a while)..."
-    rkhunter --propupd --nocolors
-    
-    # Skip the check completely as it tries to update
-    print_status "Skipping initial scan to avoid update errors"
-    print_status "Scans will run via the daily cron job"
-    
-    # Modify the discord script to not try updates
-    if [ -f /root/scripts/rkhunter-discord.sh ]; then
-        print_status "Updating Discord reporting script to skip updates..."
-        sed -i 's|rkhunter --check|rkhunter --check --nocolors|g' /root/scripts/rkhunter-discord.sh
-    fi
-    
-    print_success "Rootkit detection setup complete"
+    print_success "Lynis security auditing setup complete"
 }
 
 # Function to setup fail2ban
