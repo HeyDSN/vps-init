@@ -738,6 +738,10 @@ SKIP_INODE_CHECK=yes
 DISABLE_TESTS="suspscan deleted_files promisc sniffer possible_dhcp localhost"
 HASH_CMD_CHECK=none
 HASH_FUNC=sha256
+# Fix for WEB_CMD issue
+WEB_CMD=""
+UPDATE_MIRRORS=0
+MIRROR_DOWNLOAD=0
 EOF
         print_status "Enabled security-critical tests: hidden_procs, hidden_ports, apps, packet_cap_apps"
         print_status "Disabled tests that cause false positives on VPS environments"
