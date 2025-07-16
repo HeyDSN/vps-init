@@ -196,8 +196,8 @@ setup_ssh() {
     mkdir -p /root/.ssh
     chmod 700 /root/.ssh
     
-    # Create or reset authorized_keys file
-    > /root/.ssh/authorized_keys
+    # Create authorized_keys file if it doesn't exist
+    touch /root/.ssh/authorized_keys
     
     # Add all public keys
     if [[ ${#PUBLIC_KEYS[@]} -eq 0 ]]; then
@@ -208,8 +208,13 @@ setup_ssh() {
     
     print_status "Adding ${#PUBLIC_KEYS[@]} SSH public keys:"
     for key in "${PUBLIC_KEYS[@]}"; do
-        echo "$key" >> /root/.ssh/authorized_keys
-        print_status "  - Added key: ${key:0:20}..."
+        # Check if key already exists to avoid duplicates
+        if ! grep -q "$key" /root/.ssh/authorized_keys; then
+            echo "$key" >> /root/.ssh/authorized_keys
+            print_status "  - Added key: ${key:0:20}..."
+        else
+            print_status "  - Key already exists: ${key:0:20}..."
+        fi
     done
     
     chmod 600 /root/.ssh/authorized_keys
