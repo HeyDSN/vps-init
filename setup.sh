@@ -223,12 +223,69 @@ setup_ssh() {
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
     
     # Configure SSH settings
-    sed -i 's/#PermitRootLogin.*/PermitRootLogin without-password/' /etc/ssh/sshd_config
-    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    print_status "Configuring SSH to disable password authentication..."
     
-    # Ensure the settings are properly set
+    # Make a backup of the original config if not already done
+    if [[ ! -f /etc/ssh/sshd_config.backup ]]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+        print_status "SSH config backed up to /etc/ssh/sshd_config.backup"
+    fi
+    
+    # More aggressive approach to disable password authentication
+    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin without-password/' /etc/ssh/sshd_config
+    sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#\?UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
+    
+    # Check for and handle SSH config overrides in sshd_config.d directory
+    if [[ -d "/etc/ssh/sshd_config.d" ]]; then
+        print_status "Checking for SSH config overrides in /etc/ssh/sshd_config.d/..."
+        
+        # Create a backup directory if it doesn't exist
+        mkdir -p "/etc/ssh/sshd_config.d/backups"
+        
+        # Check all config files in the directory
+        for config_file in /etc/ssh/sshd_config.d/*.conf; do
+            if [[ -f "$config_file" ]]; then
+                filename=$(basename "$config_file")
+                print_warning "Found SSH config override file: $filename"
+                
+                # Backup the original file
+                cp "$config_file" "/etc/ssh/sshd_config.d/backups/$filename.bak"
+                print_status "Backed up to /etc/ssh/sshd_config.d/backups/$filename.bak"
+                
+                # Check if it contains password authentication settings
+                if grep -q "PasswordAuthentication" "$config_file"; then
+                    print_warning "Found password authentication settings in $filename"
+                    
+                    # Replace the entire file with our settings
+                    echo "# Modified by VPS setup script on $(date)" > "$config_file"
+                    echo "# Original file backed up to /etc/ssh/sshd_config.d/backups/$filename.bak" >> "$config_file"
+                    echo "PasswordAuthentication no" >> "$config_file"
+                    print_status "Replaced $filename with secure settings"
+                else
+                    # Add our setting to the file
+                    echo "" >> "$config_file"
+                    echo "# Added by VPS setup script on $(date)" >> "$config_file"
+                    echo "PasswordAuthentication no" >> "$config_file"
+                    print_status "Added secure settings to $filename"
+                fi
+            fi
+        done
+        
+        # Create our own config file with highest priority (99-) if it doesn't exist
+        if [[ ! -f "/etc/ssh/sshd_config.d/99-vps-setup-ssh.conf" ]]; then
+            print_status "Creating our own SSH config override with highest priority"
+            echo "# Created by VPS setup script on $(date)" > "/etc/ssh/sshd_config.d/99-vps-setup-ssh.conf"
+            echo "# This file has highest priority and overrides other settings" >> "/etc/ssh/sshd_config.d/99-vps-setup-ssh.conf"
+            echo "PasswordAuthentication no" >> "/etc/ssh/sshd_config.d/99-vps-setup-ssh.conf"
+            echo "ChallengeResponseAuthentication no" >> "/etc/ssh/sshd_config.d/99-vps-setup-ssh.conf"
+            print_success "Created override file with highest priority"
+        fi
+    fi
+    
+    # Ensure the settings are properly set by appending if not found
     if ! grep -q "^PermitRootLogin without-password" /etc/ssh/sshd_config; then
         echo "PermitRootLogin without-password" >> /etc/ssh/sshd_config
     fi
@@ -241,8 +298,20 @@ setup_ssh() {
         echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
     fi
     
-    # Restart SSH service
+    if ! grep -q "^ChallengeResponseAuthentication no" /etc/ssh/sshd_config; then
+        echo "ChallengeResponseAuthentication no" >> /etc/ssh/sshd_config
+    fi
+    
+    print_status "Restarting SSH service to apply changes..."
     systemctl restart sshd
+    
+    # Verify the changes were applied
+    print_status "Verifying SSH configuration..."
+    if sshd -T | grep -q "passwordauthentication no"; then
+        print_success "Password authentication successfully disabled"
+    else
+        print_warning "Failed to disable password authentication - please check /etc/ssh/sshd_config manually"
+    fi
     
     print_success "SSH security configured"
     print_warning "Make sure you can login with your SSH keys before closing this session!"
