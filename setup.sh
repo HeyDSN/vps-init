@@ -747,10 +747,32 @@ EOF
         print_status "Disabled tests that cause false positives on VPS environments"
     fi
     
+    # Fix the global rkhunter config to prevent WEB_CMD error
+    print_status "Fixing rkhunter global configuration..."
+    if grep -q "^WEB_CMD=" /etc/rkhunter.conf; then
+        sed -i 's|^WEB_CMD=.*|WEB_CMD=""|' /etc/rkhunter.conf
+    else
+        echo "WEB_CMD=""" >> /etc/rkhunter.conf
+    fi
+    
+    # Disable update mirrors in global config
+    if grep -q "^UPDATE_MIRRORS=" /etc/rkhunter.conf; then
+        sed -i 's|^UPDATE_MIRRORS=.*|UPDATE_MIRRORS=0|' /etc/rkhunter.conf
+    else
+        echo "UPDATE_MIRRORS=0" >> /etc/rkhunter.conf
+    fi
+    
+    # Disable mirror downloads in global config
+    if grep -q "^MIRROR_DOWNLOAD=" /etc/rkhunter.conf; then
+        sed -i 's|^MIRROR_DOWNLOAD=.*|MIRROR_DOWNLOAD=0|' /etc/rkhunter.conf
+    else
+        echo "MIRROR_DOWNLOAD=0" >> /etc/rkhunter.conf
+    fi
+    
     # Run initial scan with appropriate settings
     print_status "Running initial rkhunter scan (this may take a while)..."
-    rkhunter --propupd
-    rkhunter --check --skip-keypress
+    rkhunter --propupd --nocolors
+    rkhunter --check --skip-keypress --nocolors
     
     print_success "Rootkit detection setup complete"
 }
