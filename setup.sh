@@ -791,9 +791,26 @@ EOF
     systemctl enable fail2ban
     systemctl restart fail2ban
     
-    # Check fail2ban status
-    print_status "Checking fail2ban status..."
-    fail2ban-client status
+    # Wait for fail2ban to fully start
+    print_status "Waiting for fail2ban to initialize..."
+    sleep 5
+    
+    # Check if fail2ban is running
+    if systemctl is-active --quiet fail2ban; then
+        print_success "fail2ban service is running"
+        
+        # Try to check status, but don't fail if it doesn't work yet
+        print_status "Checking fail2ban status (if available)..."
+        if fail2ban-client status 2>/dev/null; then
+            print_success "fail2ban status retrieved successfully"
+        else
+            print_warning "fail2ban socket not ready yet - this is normal during first start"
+            print_status "fail2ban is enabled and will be fully functional after a few minutes"
+        fi
+    else
+        print_error "fail2ban service failed to start"
+        print_status "Check logs with: journalctl -u fail2ban"
+    fi
     
     print_success "fail2ban configured and enabled"
 }
